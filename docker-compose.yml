@@ -1,0 +1,163 @@
+version: "3.9"
+
+services:
+  # ─── 数据库 ───
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-distill}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-distill123}
+      POSTGRES_DB: distill_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-distill}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── 消息队列 / Celery Broker ───
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis123} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis123}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── 对象存储 (模型文件) ───
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─── MLflow 实验追踪 ───
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.2
+    environment:
+      MLFLOW_TRACKING_URI: postgresql://${POSTGRES_USER:-distill}:${POSTGRES_PASSWORD:-distill123}@postgres:5432/mlflow
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://${POSTGRES_USER:-distill}:${POSTGRES_PASSWORD:-distill123}@postgres:5432/mlflow
+      --artifacts-destination s3://mlflow-artifacts
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # ─── FastAPI 后端 ───
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-distill}:${POSTGRES_PASSWORD:-distill123}@postgres:5432/distill_platform
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin123}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - HF_HOME=/data/hf_cache
+      - HF_TOKEN=${HF_TOKEN:-}
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - modeldata:/data/models
+      - hfcache:/data/hf_cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ─── Celery Worker (训练任务) ───
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-distill}:${POSTGRES_PASSWORD:-distill123}@postgres:5432/distill_platform
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin123}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - HF_HOME=/data/hf_cache
+      - HF_TOKEN=${HF_TOKEN:-}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - modeldata:/data/models
+      - hfcache:/data/hf_cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2 -Q training,evaluation,generation
+
+  # ─── Celery Flower (任务监控) ───
+  flower:
+    image: mher/flower:2.0
+    command: celery --broker=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+
+  # ─── Vue3 前端 ───
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  modeldata:
+  hfcache:

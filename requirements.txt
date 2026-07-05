@@ -1,0 +1,46 @@
+# Backend
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# Task Queue
+celery[redis]==5.4.0
+flower==2.0.1
+
+# ML / Training
+torch==2.5.1
+transformers==4.47.1
+datasets==3.2.0
+tokenizers==0.21.0
+accelerate==1.2.1
+deepspeed==0.16.1
+peft==0.14.0
+trl==0.13.0
+bitsandbytes==0.45.0
+
+# MLflow
+mlflow==2.19.2
+
+# MinIO
+minio==7.2.13
+
+# GLM API
+zhipuai==2.1.8
+
+# Utils
+python-multipart==0.0.20
+httpx==0.28.1
+websockets==14.1
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+loguru==0.7.3
+PyYAML==6.0.2
+pandas==2.2.3
+scikit-learn==1.6.0
+nltk==3.9.1
+rouge-chinese==1.0.3
+jieba==0.42.1
