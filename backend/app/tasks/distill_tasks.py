@@ -12,7 +12,7 @@ from app.config import settings
 from app.models import TaskStatus, DistillStrategy
 
 # ─── 同步数据库连接 (Celery worker 不支持 async, 懒加载避免 import 时连接) ───
-SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
+SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2").replace("aiosqlite", "psycopg2")
 _sync_engine = None
 SyncSession = None
 

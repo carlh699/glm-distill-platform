@@ -9,19 +9,28 @@ from sqlalchemy.orm import sessionmaker
 from app.celery_app import app
 from app.config import settings
 
-SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
-sync_engine = create_engine(SYNC_DB_URL, pool_size=5)
-SyncSession = sessionmaker(bind=sync_engine)
+# ─── 同步数据库连接 (懒加载) ───
+SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2").replace("aiosqlite", "psycopg2")
+_sync_engine = None
+SyncSession = None
+
+
+def _get_sync_session():
+    global _sync_engine, SyncSession
+    if _sync_engine is None:
+        _sync_engine = create_engine(SYNC_DB_URL, pool_size=5)
+        SyncSession = sessionmaker(bind=_sync_engine)
+    return SyncSession()
 
 
 def _get_deployment(dep_id: str):
-    with SyncSession() as db:
+    with _get_sync_session() as db:
         result = db.execute(text("SELECT * FROM deployments WHERE id = :id"), {"id": dep_id})
         return dict(result.mappings().first())
 
 
 def _update_deployment(dep_id: str, **fields):
-    with SyncSession() as db:
+    with _get_sync_session() as db:
         sets = ", ".join(f"{k} = :{k}" for k in fields)
         db.execute(text(f"UPDATE deployments SET {sets} WHERE id = :id"), {"id": dep_id, **fields})
         db.commit()
@@ -40,7 +49,6 @@ def run_deployment(dep_id: str):
     framework = dep.get("framework", "vllm")
 
     try:
-        # Download model from MinIO if needed
         from app.services.storage import MinIOClient
         minio_client = MinIOClient()
 
@@ -54,43 +62,30 @@ def run_deployment(dep_id: str):
                 local_file = os.path.join(local_model_dir, rel)
                 os.makedirs(os.path.dirname(local_file), exist_ok=True)
                 minio_client.download_file(bucket, obj.object_name, local_file)
-
             deploy_path = local_model_dir
         else:
-            deploy_path = model_path  # HuggingFace ID
+            deploy_path = model_path
 
         if framework == "vllm":
-            # Launch vLLM server
             port = _find_free_port()
             cmd = [
                 "python", "-m", "vllm.entrypoints.openai.api_server",
-                "--model", deploy_path,
-                "--port", str(port),
-                "--trust-remote-code",
-                "--dtype", "half",
+                "--model", deploy_path, "--port", str(port),
+                "--trust-remote-code", "--dtype", "half",
             ]
             env = os.environ.copy()
             env["VLLM_NO_USAGE_STATS"] = "1"
-
-            proc = subprocess.Popen(
-                cmd, env=env,
+            proc = subprocess.Popen(cmd, env=env,
                 stdout=open(f"/tmp/vllm_{dep_id}.log", "w"),
-                stderr=subprocess.STDOUT,
-            )
+                stderr=subprocess.STDOUT)
 
             endpoint = f"http://localhost:{port}/v1"
-            _update_deployment(
-                dep_id,
-                status="running",
-                endpoint_url=endpoint,
-                config={"pid": proc.pid, "port": port},
-            )
-
+            _update_deployment(dep_id, status="running", endpoint_url=endpoint,
+                config={"pid": proc.pid, "port": port})
             logger.info(f"vLLM deployed at {endpoint} (PID={proc.pid})")
             return {"deployment_id": dep_id, "endpoint": endpoint, "pid": proc.pid}
 
         elif framework == "transformers":
-            # 简易 transformers 推理服务
             port = _find_free_port()
             endpoint = f"http://localhost:{port}/v1"
             _update_deployment(dep_id, status="running", endpoint_url=endpoint)

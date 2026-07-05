@@ -1,6 +1,5 @@
 """模型评估 Celery 任务"""
 import os
-import time
 import json
 from datetime import datetime
 from loguru import logger
@@ -9,21 +8,29 @@ from sqlalchemy.orm import sessionmaker
 
 from app.celery_app import app
 from app.config import settings
-from app.models import TaskStatus
 
-SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
-sync_engine = create_engine(SYNC_DB_URL, pool_size=5)
-SyncSession = sessionmaker(bind=sync_engine)
+# ─── 同步数据库连接 (懒加载, 避免 import 时连接 DB) ───
+SYNC_DB_URL = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2").replace("aiosqlite", "psycopg2")
+_sync_engine = None
+SyncSession = None
+
+
+def _get_sync_session():
+    global _sync_engine, SyncSession
+    if _sync_engine is None:
+        _sync_engine = create_engine(SYNC_DB_URL, pool_size=5)
+        SyncSession = sessionmaker(bind=_sync_engine)
+    return SyncSession()
 
 
 def _get_task(task_id: str):
-    with SyncSession() as db:
+    with _get_sync_session() as db:
         result = db.execute(text("SELECT * FROM distill_tasks WHERE id = :id"), {"id": task_id})
         return dict(result.mappings().first())
 
 
 def _insert_evaluation(data: dict):
-    with SyncSession() as db:
+    with _get_sync_session() as db:
         cols = ", ".join(data.keys())
         vals = ", ".join(f":{k}" for k in data.keys())
         db.execute(text(f"INSERT INTO evaluations ({cols}) VALUES ({vals})"), data)
@@ -44,7 +51,6 @@ def run_evaluation(task_id: str):
         return {"error": "no output model"}
 
     try:
-        # Download model from MinIO
         from app.services.storage import MinIOClient
         minio_client = MinIOClient()
 
@@ -58,11 +64,9 @@ def run_evaluation(task_id: str):
             os.makedirs(os.path.dirname(local_file), exist_ok=True)
             minio_client.download_file(bucket, obj.object_name, local_file)
 
-        # Run evaluation
         from app.engine.evaluation import evaluate_model
         metrics = evaluate_model(model_path=local_model_dir)
 
-        # Save to DB
         import uuid
         _insert_evaluation({
             "id": str(uuid.uuid4()),

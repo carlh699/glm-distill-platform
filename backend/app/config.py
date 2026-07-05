@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     WEB_PORT: int = 3000
 
-    # ─── 数据库 ───
+    # ─── 数据库 (Neon cloud PostgreSQL) ───
+    # 从环境变量 DATABASE_URL 读取，格式：
+    # postgresql+asyncpg://user:password@ep-xxx.region.aws.neon.tech/dbname?sslmode=require
     DATABASE_URL: str = "postgresql+asyncpg://distill:distill123@localhost:5432/distill_platform"
 
     # ─── Redis / Celery ───
@@ -49,7 +51,19 @@ class Settings(BaseSettings):
     DEFAULT_EPOCHS: int = 3
     DEFAULT_MAX_SEQ_LEN: int = 2048
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    # ─── AWS (Aurora PostgreSQL) ───
+    AWS_ACCOUNT_ID: str = ""
+    AWS_REGION: str = ""
+    AWS_RESOURCE_ARN: str = ""
+    AWS_RESOURCE_TYPE: str = ""
+    AWS_ROLE_ARN: str = ""
+    PGHOST: str = ""
+    PGPORT: int = 5432
+    PGDATABASE: str = ""
+    PGUSER: str = ""
+    PGSSLMODE: str = "require"
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 
 @lru_cache

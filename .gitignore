@@ -33,3 +33,7 @@ data/hf_cache/
 # Alembic
 alembic/versions/__pycache__/
 *.db
+
+.vercel
+*.png
+scripts/chrome_cdp.py
