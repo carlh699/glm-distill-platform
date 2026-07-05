@@ -53,7 +53,9 @@ class Model(Base):
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    distill_tasks: Mapped[list["DistillTask"]] = relationship(back_populates="student_model")
+    distill_tasks: Mapped[list["DistillTask"]] = relationship(
+        back_populates="student_model", foreign_keys="DistillTask.student_model_id"
+    )
 
 
 class Dataset(Base):

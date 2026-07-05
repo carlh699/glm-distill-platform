@@ -1,5 +1,5 @@
 """全局配置 - 从环境变量读取"""
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -46,9 +46,7 @@ class Settings(BaseSettings):
     DEFAULT_EPOCHS: int = 3
     DEFAULT_MAX_SEQ_LEN: int = 2048
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
 
 
 @lru_cache
