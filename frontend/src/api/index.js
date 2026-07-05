@@ -58,4 +58,17 @@ export const deploymentsApi = {
   delete: (id) => api.delete(`/deployments/${id}`),
 }
 
+// ─── Compute Nodes ───
+export const computeApi = {
+  list: (params) => api.get('/compute-nodes', { params }),
+  get: (id) => api.get(`/compute-nodes/${id}`),
+  create: (data) => api.post('/compute-nodes', data),
+  delete: (id) => api.delete(`/compute-nodes/${id}`),
+  connect: (id, config) => api.post(`/compute-nodes/${id}/connect`, config || {}),
+  disconnect: (id) => api.post(`/compute-nodes/${id}/disconnect`),
+  heartbeat: (id) => api.post(`/compute-nodes/${id}/heartbeat`),
+  autoConnectLocal: () => api.post('/compute-nodes/auto-connect-local'),
+  available: () => api.get('/compute-nodes/available/list'),
+}
+
 export default api

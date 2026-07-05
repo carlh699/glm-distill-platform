@@ -153,6 +153,65 @@ class DeploymentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ─── ComputeNode ───
+class ComputeNodeCreate(BaseModel):
+    name: str
+    node_type: str = "local"  # local, remote_ssh
+    host: str = "localhost"
+    ssh_port: int = 22
+    ssh_user: str | None = None
+    ssh_key_path: str | None = None
+    python_path: str = "python"
+    working_dir: str = "/data"
+
+
+class ComputeNodeResponse(BaseModel):
+    id: str
+    name: str
+    node_type: str
+    host: str
+    ssh_port: int
+    ssh_user: str | None
+    gpu_count: int
+    gpu_model: str
+    gpu_total_vram_gb: float
+    cpu_count: int
+    ram_total_gb: float
+    cuda_version: str
+    status: str
+    gpu_utilization: float
+    gpu_vram_used_gb: float
+    gpu_temp: float
+    cpu_utilization: float
+    ram_used_gb: float
+    disk_free_gb: float
+    current_task_id: str | None
+    last_heartbeat: datetime | None
+    created_at: datetime
+    connected_at: datetime | None
+    model_config = {"from_attributes": True}
+
+
+class ComputeNodeConnect(BaseModel):
+    """SSH 连接配置（远程节点）"""
+    ssh_user: str | None = None
+    ssh_key_path: str | None = None
+    ssh_port: int = 22
+    python_path: str = "python3"
+    working_dir: str = "/data"
+
+
+class GpuStatsResponse(BaseModel):
+    gpu_utilization: float
+    gpu_vram_used_gb: float
+    gpu_vram_total_gb: float
+    gpu_temp: float
+    cpu_utilization: float
+    ram_used_gb: float
+    ram_total_gb: float
+    disk_free_gb: float
+
+
 # ─── 通用 ───
 class PaginatedResponse(BaseModel):
     total: int

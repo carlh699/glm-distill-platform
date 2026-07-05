@@ -37,6 +37,10 @@
           <el-icon><Upload /></el-icon>
           <span>模型部署</span>
         </el-menu-item>
+        <el-menu-item index="/compute">
+          <el-icon><Monitor /></el-icon>
+          <span>算力节点</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -76,6 +80,7 @@ const currentPageTitle = computed(() => {
     '/tasks': '蒸馏任务',
     '/evaluations': '评估对比',
     '/deployments': '模型部署',
+    '/compute': '算力节点',
   }
   return map[route.path] || ''
 })

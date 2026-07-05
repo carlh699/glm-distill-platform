@@ -45,9 +45,14 @@ def _update_task(task_id: str, **fields):
 
 
 @app.task(name="app.tasks.distill_tasks.run_distillation", bind=True, max_retries=2)
-def run_distillation(self, task_id: str):
-    """主蒸馏训练任务"""
-    logger.info(f"[Celery] Starting distillation task: {task_id}")
+def run_distillation(self, task_id: str, node_id: str = ""):
+    """主蒸馏训练任务
+
+    Args:
+        task_id: 蒸馏任务 ID
+        node_id: 算力节点 ID (用于训练完成后释放)
+    """
+    logger.info(f"[Celery] Starting distillation task: {task_id} on node: {node_id}")
 
     task = _get_task(task_id)
     if not task:
@@ -172,6 +177,10 @@ def run_distillation(self, task_id: str):
             finished_at=datetime.utcnow(),
         )
 
+        # ─── 释放算力节点 ───
+        if node_id:
+            _release_node(node_id)
+
         logger.info(f"[Celery] Distillation task {task_id} completed: {metrics}")
         return {"task_id": task_id, "status": "success", "metrics": metrics}
 
@@ -183,7 +192,23 @@ def run_distillation(self, task_id: str):
             error_message=str(e),
             finished_at=datetime.utcnow(),
         )
+        # 失败也释放节点
+        if node_id:
+            _release_node(node_id)
         raise
+
+
+def _release_node(node_id: str):
+    """训练完成后释放算力节点"""
+    try:
+        with _get_sync_session() as db:
+            db.execute(text(
+                "UPDATE compute_nodes SET status = 'online', current_task_id = NULL WHERE id = :id"
+            ), {"id": node_id})
+            db.commit()
+            logger.info(f"Released compute node {node_id}")
+    except Exception as e:
+        logger.error(f"Failed to release node {node_id}: {e}")
 
 
 @app.task(name="app.tasks.distill_tasks.update_progress")

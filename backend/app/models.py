@@ -172,3 +172,42 @@ class Deployment(Base):
     gpu_memory_gb: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ComputeNode(Base):
+    """算力节点 — 管理本机/远程 GPU 算力连接"""
+    __tablename__ = "compute_nodes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    node_type: Mapped[str] = mapped_column(String(20), default="local")  # local, remote_ssh
+    host: Mapped[str] = mapped_column(String(255), default="localhost")
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22)
+    ssh_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ssh_key_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # 硬件信息
+    gpu_count: Mapped[int] = mapped_column(Integer, default=0)
+    gpu_model: Mapped[str] = mapped_column(String(255), default="")
+    gpu_total_vram_gb: Mapped[float] = mapped_column(Float, default=0)
+    cpu_count: Mapped[int] = mapped_column(Integer, default=0)
+    ram_total_gb: Mapped[float] = mapped_column(Float, default=0)
+    cuda_version: Mapped[str] = mapped_column(String(50), default="")
+
+    # 实时状态
+    status: Mapped[str] = mapped_column(String(20), default="offline")  # offline, online, busy, error
+    gpu_utilization: Mapped[float] = mapped_column(Float, default=0)   # 0-100
+    gpu_vram_used_gb: Mapped[float] = mapped_column(Float, default=0)
+    gpu_temp: Mapped[float] = mapped_column(Float, default=0)
+    cpu_utilization: Mapped[float] = mapped_column(Float, default=0)
+    ram_used_gb: Mapped[float] = mapped_column(Float, default=0)
+    disk_free_gb: Mapped[float] = mapped_column(Float, default=0)
+
+    # 当前任务
+    current_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    python_path: Mapped[str] = mapped_column(String(512), default="python")
+    working_dir: Mapped[str] = mapped_column(String(512), default="/data")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

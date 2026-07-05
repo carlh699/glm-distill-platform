@@ -1,4 +1,5 @@
 """Distill Tasks API - 蒸馏任务管理"""
+from loguru import logger
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -27,17 +28,42 @@ async def list_tasks(
 
 @router.post("", response_model=DistillTaskResponse, status_code=201)
 async def create_task(data: DistillTaskCreate, db: AsyncSession = Depends(get_db)):
-    """创建蒸馏任务并提交到 Celery"""
+    """创建蒸馏任务并提交到 Celery
+
+    自动查找一个 online 的算力节点分配执行。
+    如果没有在线节点，任务保持 PENDING 等待。
+    """
+    from app.models import ComputeNode
+    from sqlalchemy import select as sa_select
+
     task = DistillTask(**data.model_dump())
     db.add(task)
     await db.flush()
 
-    # 异步提交训练任务
-    celery_result = run_distillation.delay(task.id)
-    task.celery_task_id = celery_result.id
-    task.status = TaskStatus.PENDING
-    await db.flush()
+    # 查找可用算力节点 (优先选 GPU 数最多且空闲的)
+    node_result = await db.execute(
+        sa_select(ComputeNode)
+        .where(ComputeNode.status == "online")
+        .order_by(ComputeNode.gpu_count.desc(), ComputeNode.gpu_total_vram_gb.desc())
+        .limit(1)
+    )
+    node = node_result.scalars().first()
 
+    if node:
+        # 有可用节点，提交训练任务
+        celery_result = run_distillation.delay(task.id, node.id)
+        task.celery_task_id = celery_result.id
+        task.status = TaskStatus.PENDING
+        node.status = "busy"
+        node.current_task_id = task.id
+        logger.info(f"Task {task.id} assigned to node {node.name} ({node.gpu_count} GPU)")
+    else:
+        # 没有可用节点，等待
+        task.status = TaskStatus.PENDING
+        task.error_message = "等待算力节点连接..."
+        logger.warning(f"No available compute node for task {task.id}, waiting...")
+
+    await db.flush()
     return task
 
 
