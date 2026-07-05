@@ -125,9 +125,14 @@ class EvaluationResponse(BaseModel):
     accuracy: float | None
     inference_latency_ms: float | None
     model_size_mb: float | None
+    teacher_metrics: dict
     custom_metrics: dict
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+class EvaluationCompareRequest(BaseModel):
+    evaluation_ids: list[str] = Field(..., min_length=2)
 
 
 # ─── Deployment ───
@@ -146,11 +151,16 @@ class DeploymentResponse(BaseModel):
     framework: str
     endpoint_url: str | None
     status: str
+    health_status: str
     replicas: int
     gpu_memory_gb: float
     created_at: datetime
     stopped_at: datetime | None
     model_config = {"from_attributes": True}
+
+
+class DeploymentScaleRequest(BaseModel):
+    replicas: int = Field(1, ge=1)
 
 
 # ─── ComputeNode ───

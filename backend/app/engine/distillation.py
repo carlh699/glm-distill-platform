@@ -17,16 +17,18 @@ import os
 import json
 import torch
 import torch.nn.functional as F
+from dataclasses import dataclass, field
 from torch.utils.data import Dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
     DataCollatorForSeq2Seq,
 )
 from loguru import logger
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class DistillationDataset(Dataset):
@@ -219,7 +221,7 @@ def load_model_and_tokenizer(
 
 def run_distillation_training(
     task_id: str,
-    teacher_model_path: str,
+    teacher_model_path: Union[str, List[str]],
     student_model_path: str,
     dataset_path: str,
     strategy: str = "logits_kd",
@@ -240,6 +242,7 @@ def run_distillation_training(
     deepspeed_config: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
     mlflow_run_name: Optional[str] = None,
+    resume_from_checkpoint: Optional[str] = None,
 ):
     """执行蒸馏训练的主函数
 
@@ -276,9 +279,13 @@ def run_distillation_training(
     # ─── 2. 加载 Teacher 模型 (仅 logits_kd 策略) ───
     teacher_model = None
     if strategy == "logits_kd":
-        teacher_model, _ = load_model_and_tokenizer(teacher_model_path, load_in_4bit=True)
-        teacher_model = teacher_model.cuda()
-        logger.info("Teacher model loaded for logits-based KD")
+        teacher_paths = teacher_model_path if isinstance(teacher_model_path, list) else [teacher_model_path]
+        teacher_models = []
+        for path in teacher_paths:
+            loaded_teacher, _ = load_model_and_tokenizer(path, load_in_4bit=True)
+            teacher_models.append(loaded_teacher.cuda())
+        teacher_model = teacher_models[0] if len(teacher_models) == 1 else teacher_models
+        logger.info(f"Teacher model loaded for logits-based KD (count={len(teacher_models)})")
     elif strategy == "response_kd":
         logger.info("Response-based KD: using pre-generated teacher responses (SFT mode)")
 
@@ -323,19 +330,33 @@ def run_distillation_training(
     )
 
     # ─── 5. 创建 Trainer ───
-    trainer = DistillationTrainer(
-        model=student_model,
-        teacher_model=teacher_model,
-        temperature=temperature,
-        alpha=alpha,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=collator,
-    )
+    if isinstance(teacher_model, list):
+        trainer = MultiTeacherDistillationTrainer(
+            model=student_model,
+            teacher_models=teacher_model,
+            temperature=temperature,
+            alpha=alpha,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=collator,
+            callbacks=[DistillationCallback(task_id)],
+        )
+    else:
+        trainer = DistillationTrainer(
+            model=student_model,
+            teacher_model=teacher_model,
+            temperature=temperature,
+            alpha=alpha,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=collator,
+            callbacks=[DistillationCallback(task_id)],
+        )
 
     # ─── 6. 训练 ───
-    train_result = trainer.train()
+    train_result = trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     # ─── 7. 保存模型 ───
     final_dir = os.path.join(output_dir, "final")
@@ -365,3 +386,101 @@ def run_distillation_training(
 
     logger.info(f"[Task {task_id}] Distillation complete: {metrics}")
     return metrics
+
+
+@dataclass
+class ProgressiveDistillationConfig:
+    """渐进式蒸馏配置，stages 按顺序描述每一阶段的 teacher、数据和训练参数。"""
+
+    stages: List[Dict[str, Any]] = field(default_factory=list)
+
+
+class MultiTeacherDistillationTrainer(Trainer):
+    """多 Teacher 蒸馏 Trainer，先平均多个 Teacher logits，再计算 KD 损失。"""
+
+    def __init__(self, teacher_models=None, temperature=2.0, alpha=0.5, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if teacher_models is None:
+            self.teacher_models = []
+        elif isinstance(teacher_models, (list, tuple)):
+            self.teacher_models = list(teacher_models)
+        else:
+            self.teacher_models = [teacher_models]
+
+        self.temperature = temperature
+        self.alpha = alpha
+
+        # Teacher 只做推理，不参与梯度更新。
+        for teacher_model in self.teacher_models:
+            teacher_model.eval()
+            for param in teacher_model.parameters():
+                param.requires_grad = False
+
+        logger.info(f"Multi-teacher KD enabled (teachers={len(self.teacher_models)}, T={temperature}, alpha={alpha})")
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # Student 正常前向，用 labels 计算 hard-label CE。
+        outputs = model(**inputs)
+        student_logits = outputs.logits
+        labels = inputs["labels"]
+
+        ce_loss = F.cross_entropy(
+            student_logits.view(-1, student_logits.size(-1)),
+            labels.view(-1),
+            ignore_index=-100,
+        )
+
+        if not self.teacher_models or self.alpha <= 0:
+            loss = ce_loss
+            return (loss, outputs) if return_outputs else loss
+
+        teacher_logits_list = []
+        with torch.no_grad():
+            for teacher_model in self.teacher_models:
+                teacher_outputs = teacher_model(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs["attention_mask"],
+                )
+                teacher_logits_list.append(teacher_outputs.logits.to(student_logits.device))
+
+        # 多个 Teacher 的原始 logits 先取平均，再作为 soft target。
+        teacher_logits = torch.stack(teacher_logits_list, dim=0).mean(dim=0)
+
+        T = self.temperature
+        kd_loss = F.kl_div(
+            F.log_softmax(student_logits / T, dim=-1),
+            F.softmax(teacher_logits / T, dim=-1),
+            reduction="batchmean",
+        ) * (T * T)
+
+        loss = self.alpha * kd_loss + (1 - self.alpha) * ce_loss
+        return (loss, outputs) if return_outputs else loss
+
+
+class DistillationCallback(TrainerCallback):
+    """训练进度回调，每 50 step 通过 Celery update_progress 上报一次。"""
+
+    def __init__(self, task_id: str, update_interval: int = 50):
+        self.task_id = task_id
+        self.update_interval = update_interval
+
+    def on_step_end(self, args, state, control, **kwargs):
+        current_step = int(state.global_step or 0)
+        total_steps = int(state.max_steps or 0)
+
+        if current_step <= 0 or current_step % self.update_interval != 0:
+            return control
+
+        progress = min(current_step / total_steps, 1.0) if total_steps > 0 else 0.0
+
+        try:
+            from app.tasks.distill_tasks import update_progress
+
+            if hasattr(update_progress, "delay"):
+                update_progress.delay(self.task_id, progress, current_step, total_steps)
+            else:
+                update_progress(self.task_id, progress, current_step, total_steps)
+        except Exception as exc:
+            logger.warning(f"[Task {self.task_id}] Failed to update distillation progress: {exc}")
+
+        return control

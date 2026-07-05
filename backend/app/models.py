@@ -150,6 +150,7 @@ class Evaluation(Base):
     accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
     inference_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_size_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    teacher_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     custom_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -167,6 +168,7 @@ class Deployment(Base):
     framework: Mapped[str] = mapped_column(String(50), default="vllm")  # vllm, transformers
     endpoint_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, stopped
+    health_status: Mapped[str] = mapped_column(String(20), default="unknown")
     config: Mapped[dict] = mapped_column(JSON, default=dict)
     replicas: Mapped[int] = mapped_column(Integer, default=1)
     gpu_memory_gb: Mapped[float] = mapped_column(Float, default=0)

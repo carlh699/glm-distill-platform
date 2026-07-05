@@ -72,11 +72,11 @@
           />
         </template>
       </el-table-column>
-      <el-table-column label="温度" width="80">
+      <el-table-column label="温度" width="105">
         <template #default="{ row }">
-          <span :style="{ color: row.gpu_temp > 80 ? '#F56C6C' : row.gpu_temp > 60 ? '#E6A23C' : '#67C23A' }">
-            {{ row.gpu_temp.toFixed(0) }}°C
-          </span>
+          <el-tag :type="gpuTempType(row.gpu_temp)" size="small" effect="dark">
+            {{ formatGpuTemp(row.gpu_temp) }}<span v-if="isGpuHot(row.gpu_temp)"> 高温</span>
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="cpu_count" label="CPU" width="60" />
@@ -192,6 +192,7 @@ const showMonitor = ref(false)
 const monitorNode = ref(null)
 const monitorStats = ref(null)
 let monitorTimer = null
+let heartbeatTimer = null
 
 const remoteForm = ref({
   name: '', host: '', ssh_port: 22, ssh_user: 'root',
@@ -210,11 +211,46 @@ const vramPercent = computed(() => {
 const statusType = (s) => ({ online: 'success', busy: 'warning', offline: 'info', error: 'danger' }[s] || 'info')
 const statusLabel = (s) => ({ online: '在线', busy: '运行中', offline: '离线', error: '错误' }[s] || s)
 const gpuColor = (v) => v > 90 ? '#F56C6C' : v > 70 ? '#E6A23C' : '#67C23A'
+const isGpuHot = (v) => Number(v) > 80
+const gpuTempType = (v) => isGpuHot(v) ? 'danger' : Number(v) > 60 ? 'warning' : 'success'
+const formatGpuTemp = (v) => Number.isFinite(Number(v)) ? `${Number(v).toFixed(0)}°C` : '-'
 
 const loadNodes = async () => {
   loading.value = true
   try { nodes.value = await computeApi.list() }
   finally { loading.value = false }
+}
+
+const applyNodeStats = (nodeId, stats) => {
+  const idx = nodes.value.findIndex(n => n.id === nodeId)
+  if (idx < 0) return
+  nodes.value[idx].gpu_utilization = stats.gpu_utilization
+  nodes.value[idx].gpu_vram_used_gb = stats.gpu_vram_used_gb
+  if (stats.gpu_vram_total_gb !== undefined) nodes.value[idx].gpu_total_vram_gb = stats.gpu_vram_total_gb
+  nodes.value[idx].gpu_temp = stats.gpu_temp
+  nodes.value[idx].cpu_utilization = stats.cpu_utilization
+  nodes.value[idx].ram_used_gb = stats.ram_used_gb
+  if (stats.ram_total_gb !== undefined) nodes.value[idx].ram_total_gb = stats.ram_total_gb
+  if (stats.disk_free_gb !== undefined) nodes.value[idx].disk_free_gb = stats.disk_free_gb
+  nodes.value[idx].last_heartbeat = new Date().toISOString()
+}
+
+const refreshOnlineNodeHeartbeats = async () => {
+  const onlineNodes = nodes.value.filter(n => n.status === 'online' || n.status === 'busy')
+  if (!onlineNodes.length) return
+  await Promise.allSettled(onlineNodes.map(async (node) => {
+    const stats = await computeApi.heartbeat(node.id)
+    applyNodeStats(node.id, stats)
+  }))
+}
+
+const startHeartbeatRefresh = () => {
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
+  heartbeatTimer = setInterval(refreshOnlineNodeHeartbeats, 5000)
+}
+
+const stopHeartbeatRefresh = () => {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null }
 }
 
 const handleAutoConnect = async () => {
@@ -279,15 +315,7 @@ const startMonitor = (node) => {
   const poll = async () => {
     try {
       monitorStats.value = await computeApi.heartbeat(node.id)
-      // 同时更新列表中的数据
-      const idx = nodes.value.findIndex(n => n.id === node.id)
-      if (idx >= 0) {
-        nodes.value[idx].gpu_utilization = monitorStats.value.gpu_utilization
-        nodes.value[idx].gpu_vram_used_gb = monitorStats.value.gpu_vram_used_gb
-        nodes.value[idx].gpu_temp = monitorStats.value.gpu_temp
-        nodes.value[idx].cpu_utilization = monitorStats.value.cpu_utilization
-        nodes.value[idx].ram_used_gb = monitorStats.value.ram_used_gb
-      }
+      applyNodeStats(node.id, monitorStats.value)
     } catch (e) {
       stopMonitor()
     }
@@ -301,8 +329,15 @@ const stopMonitor = () => {
   monitorStats.value = null
 }
 
-onMounted(loadNodes)
-onUnmounted(stopMonitor)
+onMounted(async () => {
+  await loadNodes()
+  refreshOnlineNodeHeartbeats()
+  startHeartbeatRefresh()
+})
+onUnmounted(() => {
+  stopMonitor()
+  stopHeartbeatRefresh()
+})
 </script>
 
 <style scoped>

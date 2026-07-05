@@ -4,8 +4,13 @@
       <h2>评估对比</h2>
     </div>
 
+    <!-- 雷达图表 -->
+    <el-card header="模型指标雷达图" class="mb-20" v-if="evaluations.length">
+      <v-chart :option="radarChartOption" style="height: 420px" autoresize />
+    </el-card>
+
     <!-- 对比图表 -->
-    <el-card class="mb-20" v-if="evaluations.length">
+    <el-card header="原始指标对比" class="mb-20" v-if="evaluations.length">
       <v-chart :option="compareChart" style="height: 400px" autoresize />
     </el-card>
 
@@ -38,16 +43,77 @@
 import { ref, onMounted, computed } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
+import { BarChart, RadarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, LegendComponent, RadarComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { evaluationsApi } from '../api'
 import dayjs from 'dayjs'
 
-use([CanvasRenderer, BarChart, GridComponent, TooltipComponent, LegendComponent])
+use([CanvasRenderer, BarChart, RadarChart, GridComponent, TooltipComponent, LegendComponent, RadarComponent])
 
 const evaluations = ref([])
 const loading = ref(false)
+
+const radarMetrics = [
+  { key: 'perplexity', name: 'PPL', lowerBetter: true },
+  { key: 'bleu', name: 'BLEU' },
+  { key: 'rouge_l', name: 'ROUGE-L' },
+  { key: 'inference_latency_ms', name: '延迟', lowerBetter: true },
+  { key: 'model_size_mb', name: '大小', lowerBetter: true },
+]
+
+const modelLabel = (evaluation, index) => {
+  const path = evaluation.model_path || `Model ${index + 1}`
+  return path.split('/').filter(Boolean).pop() || `Model ${index + 1}`
+}
+
+const metricValues = (key) => evaluations.value.map(item => Number(item[key]) || 0).filter(value => value > 0)
+
+const normalizeMetric = (evaluation, metric) => {
+  const value = Number(evaluation[metric.key]) || 0
+  const values = metricValues(metric.key)
+  if (!value || !values.length) return 0
+  if (metric.lowerBetter) {
+    const best = Math.min(...values)
+    return Math.round((best / value) * 100)
+  }
+  const max = Math.max(...values)
+  return max ? Math.round((value / max) * 100) : 0
+}
+
+const radarChartOption = computed(() => ({
+  tooltip: {
+    trigger: 'item',
+    formatter: (params) => {
+      const evaluation = evaluations.value[params.dataIndex]
+      if (!evaluation) return params.name
+      return [
+        `<b>${params.name}</b>`,
+        `PPL: ${evaluation.perplexity?.toFixed(2) || '-'}`,
+        `BLEU: ${evaluation.bleu?.toFixed(4) || '-'}`,
+        `ROUGE-L: ${evaluation.rouge_l?.toFixed(4) || '-'}`,
+        `延迟: ${evaluation.inference_latency_ms?.toFixed(1) || '-'} ms/tok`,
+        `大小: ${evaluation.model_size_mb?.toFixed(1) || '-'} MB`,
+      ].join('<br/>')
+    },
+  },
+  legend: { top: 0, data: evaluations.value.map(modelLabel) },
+  radar: {
+    radius: '62%',
+    center: ['50%', '56%'],
+    indicator: radarMetrics.map(metric => ({ name: metric.name, max: 100 })),
+  },
+  series: [
+    {
+      name: '模型指标',
+      type: 'radar',
+      data: evaluations.value.map((evaluation, index) => ({
+        name: modelLabel(evaluation, index),
+        value: radarMetrics.map(metric => normalizeMetric(evaluation, metric)),
+      })),
+    },
+  ],
+}))
 
 const compareChart = computed(() => ({
   tooltip: { trigger: 'axis' },

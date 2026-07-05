@@ -4,10 +4,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models import Deployment
-from app.schemas import DeploymentCreate, DeploymentResponse, ApiResponse
+from app.schemas import DeploymentCreate, DeploymentResponse, DeploymentScaleRequest, ApiResponse
 from app.tasks.deploy_tasks import run_deployment
 
 router = APIRouter(prefix="/deployments", tags=["部署管理"])
+
+
+def _deployment_status_payload(dep: Deployment) -> dict:
+    return {
+        "deployment_id": dep.id,
+        "model_name": dep.model_name,
+        "model_path": dep.model_path,
+        "framework": dep.framework,
+        "endpoint_url": dep.endpoint_url,
+        "status": dep.status,
+        "health_status": dep.health_status,
+        "replicas": dep.replicas,
+        "gpu_memory_gb": dep.gpu_memory_gb,
+    }
 
 
 @router.get("", response_model=list[DeploymentResponse])
@@ -38,6 +52,27 @@ async def get_deployment(dep_id: str, db: AsyncSession = Depends(get_db)):
     if not dep:
         raise HTTPException(404, "部署不存在")
     return dep
+
+
+@router.get("/{dep_id}/status", response_model=ApiResponse)
+async def get_deployment_status(dep_id: str, db: AsyncSession = Depends(get_db)):
+    """查询部署运行状态和健康状态"""
+    dep = await db.get(Deployment, dep_id)
+    if not dep:
+        raise HTTPException(404, "部署不存在")
+    return ApiResponse(message="部署状态获取成功", data=_deployment_status_payload(dep))
+
+
+@router.post("/{dep_id}/scale", response_model=ApiResponse)
+async def scale_deployment(dep_id: str, data: DeploymentScaleRequest, db: AsyncSession = Depends(get_db)):
+    """调整部署副本数量"""
+    dep = await db.get(Deployment, dep_id)
+    if not dep:
+        raise HTTPException(404, "部署不存在")
+
+    dep.replicas = data.replicas
+    await db.flush()
+    return ApiResponse(message="部署副本数已更新", data=_deployment_status_payload(dep))
 
 
 @router.post("/{dep_id}/stop")

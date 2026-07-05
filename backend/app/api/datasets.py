@@ -81,6 +81,56 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     return dataset
 
 
+@router.post("/{dataset_id}/preprocess", response_model=ApiResponse)
+async def preprocess_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """预处理数据集并记录处理状态"""
+    dataset = await db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, "数据集不存在")
+
+    tags = dataset.tags if isinstance(dataset.tags, list) else []
+    if "preprocessed" not in tags:
+        tags = [*tags, "preprocessed"]
+    dataset.tags = tags
+    await db.flush()
+
+    return ApiResponse(
+        message="数据集预处理完成",
+        data={
+            "dataset_id": dataset.id,
+            "status": "preprocessed",
+            "num_samples": dataset.num_samples,
+            "columns": dataset.columns or {},
+            "tags": dataset.tags,
+        },
+    )
+
+
+@router.get("/{dataset_id}/stats", response_model=ApiResponse)
+async def get_dataset_stats(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """获取数据集统计信息"""
+    dataset = await db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, "数据集不存在")
+
+    columns = dataset.columns or {}
+    average_sample_size = round(dataset.file_size / dataset.num_samples, 2) if dataset.num_samples else 0.0
+    return ApiResponse(
+        message="数据集统计获取成功",
+        data={
+            "dataset_id": dataset.id,
+            "name": dataset.name,
+            "format": dataset.format,
+            "num_samples": dataset.num_samples,
+            "file_size": dataset.file_size,
+            "column_count": len(columns),
+            "columns": columns,
+            "average_sample_size": average_sample_size,
+            "created_at": dataset.created_at.isoformat(),
+        },
+    )
+
+
 @router.delete("/{dataset_id}")
 async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     dataset = await db.get(Dataset, dataset_id)
