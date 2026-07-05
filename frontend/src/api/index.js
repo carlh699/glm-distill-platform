@@ -28,7 +28,7 @@ export const modelsApi = {
 export const datasetsApi = {
   list: (params) => api.get('/datasets', { params }),
   get: (id) => api.get(`/datasets/${id}`),
-  create: (formData) => api.post('/datasets', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  create: (formData, opts) => api.post('/datasets', formData, { ...opts, headers: { 'Content-Type': 'multipart/form-data' } }),
   delete: (id) => api.delete(`/datasets/${id}`),
   preview: (id, n) => api.get(`/datasets/${id}/preview`, { params: { n } }),
 }

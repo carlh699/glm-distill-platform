@@ -8,9 +8,12 @@ class Settings(BaseSettings):
     APP_NAME: str = "GLM Distill Platform"
     SECRET_KEY: str = "dev-secret-key-change-in-prod"
     API_PREFIX: str = "/api/v1"
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8000
+    WEB_PORT: int = 3000
 
     # ─── 数据库 ───
-    DATABASE_URL: str = "postgresql+asyncpg://distill...@localhost:5432/distill_platform"
+    DATABASE_URL: str = "postgresql+asyncpg://distill:distill123@localhost:5432/distill_platform"
 
     # ─── Redis / Celery ───
     CELERY_BROKER_URL: str = "redis://:redis123@localhost:6379/0"

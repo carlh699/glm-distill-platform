@@ -100,9 +100,12 @@ const handleUpload = async () => {
   try {
     const formData = new FormData()
     formData.append('file', uploadForm.value.file)
-    await datasetsApi.create(formData)
-    // 由于 name 和 description 是 query 参数，这里重新构建
-    // 实际上 API 通过 query 参数接收
+    await datasetsApi.create(formData, {
+      params: {
+        name: uploadForm.value.name,
+        description: uploadForm.value.description,
+      },
+    })
     ElMessage.success('上传成功')
     showUpload.value = false
     uploadForm.value = { name: '', description: '', file: null }
