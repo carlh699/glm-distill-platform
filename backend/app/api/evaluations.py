@@ -132,5 +132,10 @@ async def trigger_evaluation(task_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "任务不存在")
     if task.status.value != "success":
         raise HTTPException(400, "任务未完成，无法评估")
-    result = run_evaluation.delay(task_id)
-    return {"message": "评估已提交", "celery_task_id": result.id}
+    from app.celery_app import celery_available
+    if celery_available():
+        result = run_evaluation.delay(task_id)
+        return {"message": "评估已提交", "celery_task_id": result.id}
+    else:
+        logging.warning("Celery broker unavailable, evaluation queued but not started")
+        return {"message": "评估已排队(Celery离线)", "celery_task_id": None}

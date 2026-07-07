@@ -1,4 +1,5 @@
 """Deployments API - 模型部署管理"""
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -42,7 +43,14 @@ async def create_deployment(data: DeploymentCreate, db: AsyncSession = Depends(g
     dep = Deployment(**data.model_dump())
     db.add(dep)
     await db.flush()
-    result = run_deployment.delay(dep.id)
+    from app.celery_app import celery_available
+    if celery_available():
+        try:
+            result = run_deployment.delay(dep.id)
+        except Exception as e:
+            logging.warning(f"Celery task dispatch failed: {e}")
+    else:
+        logging.warning("Celery broker unavailable, deployment created but not started")
     return dep
 
 

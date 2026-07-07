@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models import Dataset
 from app.schemas import DatasetResponse, ApiResponse
-from app.services.storage import MinIOClient
+from app.services.storage import get_storage
 from app.config import settings
 
 router = APIRouter(prefix="/datasets", tags=["数据集管理"])
@@ -55,7 +55,7 @@ async def create_dataset(
             columns = {c.strip(): "string" for c in lines[0].split(",")}
 
     # 上传到 MinIO
-    minio_client = MinIOClient()
+    minio_client = get_storage()
     object_name = f"datasets/{name}/{file.filename}"
     minio_client.upload_bytes(settings.MINIO_BUCKET_DATASETS, object_name, content, file.content_type)
 
@@ -147,7 +147,7 @@ async def preview_dataset(dataset_id: str, n: int = 10, db: AsyncSession = Depen
     if not dataset:
         raise HTTPException(404, "数据集不存在")
 
-    minio_client = MinIOClient()
+    minio_client = get_storage()
     bucket, obj_name = dataset.file_path.split("/", 1)
     content = minio_client.download_bytes(bucket, obj_name)
 

@@ -51,12 +51,21 @@ async def create_task(data: DistillTaskCreate, db: AsyncSession = Depends(get_db
 
     if node:
         # 有可用节点，提交训练任务
-        celery_result = run_distillation.delay(task.id, node.id)
-        task.celery_task_id = celery_result.id
-        task.status = TaskStatus.PENDING
-        node.status = "busy"
-        node.current_task_id = task.id
-        logger.info(f"Task {task.id} assigned to node {node.name} ({node.gpu_count} GPU)")
+        from app.celery_app import celery_available
+        if celery_available():
+            try:
+                celery_result = run_distillation.delay(task.id, node.id)
+                task.celery_task_id = celery_result.id
+                task.status = TaskStatus.PENDING
+                node.status = "busy"
+                node.current_task_id = task.id
+                logger.info(f"Task {task.id} assigned to node {node.name} ({node.gpu_count} GPU)")
+            except Exception as e:
+                logger.warning(f"Celery dispatch failed: {e}")
+                task.status = TaskStatus.PENDING
+        else:
+            logger.warning(f"Celery broker unavailable, task {task.id} queued but not started")
+            task.status = TaskStatus.PENDING
     else:
         # 没有可用节点，等待
         task.status = TaskStatus.PENDING

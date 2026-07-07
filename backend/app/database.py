@@ -10,7 +10,7 @@ engine = create_async_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
-    connect_args={"ssl": "require"} if "neon.tech" in settings.DATABASE_URL else {},
+    connect_args={"ssl": "require"} if ("neon.tech" in settings.DATABASE_URL or "supabase" in settings.DATABASE_URL) else {},
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
